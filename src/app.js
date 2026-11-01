@@ -66,9 +66,13 @@ function prefillCardio(deviceId) {
   ui.form = { mode: 'cardio', deviceId, minutes: done?.minutes ?? 20, metric: done?.metric ?? 0 };
 }
 
+// iOS kann die App beim Sperren beenden. Danach geht es bei der letzten Eingabe weiter.
 function firstTarget() {
   const plan = planById(state.active.planId);
-  if (plan.exerciseIds.length) prefill(plan.exerciseIds[0]);
+  const last = state.active.entries[state.active.entries.length - 1];
+  if (last?.kind === 'set') prefill(last.exerciseId);
+  else if (last?.kind === 'cardio') prefillCardio(last.deviceId);
+  else if (plan.exerciseIds.length) prefill(plan.exerciseIds[0]);
   else prefillCardio(state.cardioDevices[0].id);
 }
 
@@ -698,10 +702,10 @@ function sheetView() {
 }
 
 const TABS = [
+  ['shop', 'Shop', '◎'],
   ['status', 'Status', '◈'],
   ['dungeon', 'Dungeon', '⚔'],
   ['inventory', 'Inventar', '▣'],
-  ['shop', 'Shop', '◎'],
   ['nutrition', 'Ernährung', '🔒'],
 ];
 const VIEWS = { status: statusView, dungeon: dungeonView, inventory: inventoryView, shop: shopView, nutrition: nutritionView };
