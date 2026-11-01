@@ -1,0 +1,9 @@
+{
+  "name": "gym-system",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test test/rules.test.js",
+    "icons": "node scripts/make-icons.mjs"
+  }
+}
