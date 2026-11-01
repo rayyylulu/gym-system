@@ -9,10 +9,16 @@ function isValidState(data) {
   );
 }
 
+// Ergänzt Felder, die neuer sind als der gespeicherte Stand.
+export function withDefaults(data) {
+  const defaults = createState();
+  return { ...defaults, ...data, claims: { ...defaults.claims, ...data.claims } };
+}
+
 export function load() {
   try {
     const data = JSON.parse(localStorage.getItem(KEY));
-    if (isValidState(data)) return { ...createState(), ...data };
+    if (isValidState(data)) return withDefaults(data);
   } catch {
     // Beschädigte oder gesperrte Daten dürfen den Start nicht verhindern.
   }
@@ -57,7 +63,7 @@ export async function exportBackup(state) {
 export function parseBackup(text) {
   try {
     const data = JSON.parse(text);
-    return isValidState(data) ? { ...createState(), ...data } : null;
+    return isValidState(data) ? withDefaults(data) : null;
   } catch {
     return null;
   }

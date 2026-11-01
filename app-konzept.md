@@ -46,6 +46,12 @@ Alle Zahlen sind Startwerte und werden beim Testen angepasst.
 | Dungeon geschafft | 30 bis 100 je nach Rang |
 | Wochenziel: 4 Trainings | 200 |
 | Tagesquest: 10.000 Schritte | 50 |
+| Wiege-Quest: einmal pro Woche | 50 |
+
+Bonusbeute der Quests (Glück erhöht nur die Lootbox-Chance):
+- Tagesquest: 5 % Lootbox, 15 % 20 Essenz, 40 % 75 Münzen, 40 % nichts
+- Wochenziel: 25 % Lootbox, sonst 300 Münzen
+- Wiege-Quest: 10 % Lootbox, sonst 100 Münzen
 
 - Kosten von Level n auf n+1: 300 + 60 × n XP, keine Level-Obergrenze
 - Pro Level-up 3 Attributspunkte für Stärke, Präzision, Ausdauer und Glück
@@ -60,6 +66,13 @@ Alle Zahlen sind Startwerte und werden beim Testen angepasst.
 - Werte sind zufällig
 - Alte Teile werden zu Essenz zerlegt; Essenz und Münzen bringen ein Teil auf dein Level
 - Glücksschutz: spätestens nach 30 Lootboxen ein legendäres Teil
+- Jedes der 16 Item-Modelle hat eine eigene Grafik, Episch und Legendär leuchten und funkeln
+- Kisten öffnen sich mit einem Streifen wie in Counter-Strike; das Ergebnis steht vorher fest, die Streifen-Füllung ist nur Optik
+
+## Fortschritt
+- Status hat die Ansichten Übersicht und Fortschritt
+- Körpergewicht: Eintrag, Diagramm, Veränderung seit dem ersten Wert
+- Kraftentwicklung pro Übung: Diagramm für Kraftwert oder Gewicht des besten Arbeitssatzes
 
 ## Shop
 | Angebot | Münzen |

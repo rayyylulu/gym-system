@@ -65,7 +65,8 @@ export function createState() {
     equipped: {},
     pity: 0,
     steps: {},
-    claims: { days: {}, weeks: {} },
+    bodyweight: [],
+    claims: { days: {}, weeks: {}, weighIns: {} },
     cosmetics: { owned: ['theme-blue'], theme: 'theme-blue', title: null },
     backup: { trainingsSince: 0, lastAt: null },
   };

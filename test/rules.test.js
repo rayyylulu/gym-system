@@ -1,11 +1,12 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import {
-  addXp, baselineFor, collectBonuses, computeSession, createSession, dismantleItem, finishSession,
-  hunterRank, itemValue, levelCost, logSteps, mulberry, nextPlanId, openBox, rerollGate, rollItem,
+  addXp, baselineFor, collectBonuses, computeSession, createSession, dismantleItem, exerciseProgress, finishSession,
+  hunterRank, itemValue, levelCost, logBodyweight, logSteps, mulberry, nextPlanId, openBox, rerollGate, rollItem,
   strengthValue, upgradeCost, upgradeItem,
 } from '../src/rules.js';
 import { createState } from '../src/data.js';
+import { withDefaults } from '../src/store.js';
 
 const noBonuses = { base: 0, crit: 0, cardio: 0, finisher: 0, coins: 0, luck: 0, uniques: [] };
 
@@ -158,10 +159,67 @@ test('Tor-Neuwurf kostet Münzen und ändert den Rang', () => {
 
 test('Tagesquest gibt pro Tag nur einmal XP', () => {
   const state = createState();
-  assert.equal(logSteps(state, '2026-11-02', 9999), false);
-  assert.equal(logSteps(state, '2026-11-02', 10000), true);
-  assert.equal(logSteps(state, '2026-11-02', 12000), false);
+  assert.equal(logSteps(state, '2026-11-02', 9999), null);
+  assert.ok(logSteps(state, '2026-11-02', 10000));
+  assert.equal(logSteps(state, '2026-11-02', 12000), null);
   assert.equal(state.player.xp, 50);
+});
+
+test('Tagesquest kann mit Glück eine Lootbox bringen', () => {
+  const lucky = createState();
+  assert.deepEqual(logSteps(lucky, '2026-11-02', 10000, () => 0), { coins: 0, essence: 0, boxes: 1 });
+  assert.equal(lucky.player.boxes, 1);
+
+  const unlucky = createState();
+  assert.deepEqual(logSteps(unlucky, '2026-11-02', 10000, () => 0.99), { coins: 0, essence: 0, boxes: 0 });
+  assert.equal(unlucky.player.boxes, 0);
+});
+
+test('Wochenziel bringt immer eine Zusatzbelohnung', () => {
+  const state = createState();
+  const now = new Date(2026, 10, 2, 18);
+  const rng = mulberry(5);
+  let summary;
+  for (let i = 0; i < 4; i++) {
+    state.active = createSession(state, state.plans[0], now, rng);
+    state.active.entries.push(set(50, 10));
+    summary = finishSession(state, now, () => 0.99);
+  }
+  assert.deepEqual(summary.weeklyReward, { coins: 300, essence: 0, boxes: 0 });
+});
+
+test('Wiegen zählt pro Woche einmal, ein Tag hat nur einen Wert', () => {
+  const state = createState();
+  const monday = new Date(2026, 10, 2, 8);
+  const friday = new Date(2026, 10, 6, 8);
+  const nextMonday = new Date(2026, 10, 9, 8);
+  assert.ok(logBodyweight(state, monday, 80));
+  assert.equal(logBodyweight(state, monday, 79.5), null);
+  assert.equal(logBodyweight(state, friday, 79), null);
+  assert.ok(logBodyweight(state, nextMonday, 78.5));
+  assert.deepEqual(state.bodyweight.map((entry) => entry.kg), [79.5, 79, 78.5]);
+  assert.equal(state.player.xp, 100);
+});
+
+test('Kraftverlauf nimmt den besten Arbeitssatz pro Training', () => {
+  const history = [
+    past(set(100, 10, 'warm'), set(40, 10), set(50, 8)),
+    past(set(30, 10, 'work', 'row')),
+    past(set(50, 9)),
+  ];
+  const progress = exerciseProgress(history, 'bench');
+  assert.deepEqual(progress.map((entry) => [entry.weight, entry.reps, entry.strength]), [[50, 8, 63.3], [50, 9, 65]]);
+});
+
+test('alter Spielstand bekommt die neuen Felder ohne Datenverlust', () => {
+  const old = { ...createState(), history: [past()], claims: { days: { a: true }, weeks: {} } };
+  delete old.bodyweight;
+  const state = withDefaults(old);
+  assert.deepEqual(state.bodyweight, []);
+  assert.deepEqual(state.claims.weighIns, {});
+  assert.equal(state.claims.days.a, true);
+  assert.equal(state.history.length, 1);
+  assert.ok(logBodyweight(state, new Date(2026, 10, 2), 80));
 });
 
 test('Glücksschutz garantiert spätestens die 30. Box', () => {

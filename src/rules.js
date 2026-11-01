@@ -9,8 +9,14 @@ export const WEEKLY_GOAL = 4;
 export const STEP_GOAL = 10000;
 export const PITY_LIMIT = 30;
 
-export const XP = { training: 100, crit: 20, weekly: 200, steps: 50 };
+export const XP = { training: 100, crit: 20, weekly: 200, steps: 50, weighIn: 50 };
 export const POINTS_PER_LEVEL = 3;
+
+export const QUEST_REWARDS = {
+  steps: [{ weight: 5, boxes: 1 }, { weight: 15, essence: 20 }, { weight: 40, coins: 75 }, { weight: 40 }],
+  weekly: [{ weight: 25, boxes: 1 }, { weight: 75, coins: 300 }],
+  weighIn: [{ weight: 10, boxes: 1 }, { weight: 90, coins: 100 }],
+};
 
 export const PRICES = { box: 500, essence: 300, reroll: 200 };
 export const ESSENCE_PACK = 50;
@@ -422,7 +428,20 @@ export function rerollGate(state, rng) {
   return true;
 }
 
-export function finishSession(state, now) {
+// Bonusbeute der Quests. Glück erhöht nur die Chance auf eine Lootbox.
+function grantQuestReward(state, kind, rng) {
+  const { luck } = collectBonuses(state.player, state.inventory, state.equipped);
+  const table = QUEST_REWARDS[kind].map((entry) => (
+    entry.boxes ? { ...entry, weight: entry.weight * (1 + luck) } : entry
+  ));
+  const { coins = 0, essence = 0, boxes = 0 } = pickWeighted(table, rng);
+  state.player.coins += coins;
+  state.player.essence += essence;
+  state.player.boxes += boxes;
+  return { coins, essence, boxes };
+}
+
+export function finishSession(state, now, rng = Math.random) {
   const session = state.active;
   const result = computeSession(session, state.history, state.cardioDevices);
   const rank = rankById(session.rankId);
@@ -447,9 +466,11 @@ export function finishSession(state, now) {
 
   const week = weekKey(now);
   const weeklyReached = trainingsThisWeek(state.history, now) >= WEEKLY_GOAL && !state.claims.weeks[week];
+  let weeklyReward = null;
   if (weeklyReached) {
     state.claims.weeks[week] = true;
     xp += XP.weekly;
+    weeklyReward = grantQuestReward(state, 'weekly', rng);
   }
 
   player.coins += result.coins;
@@ -458,14 +479,49 @@ export function finishSession(state, now) {
   state.active = null;
   state.backup.trainingsSince += 1;
 
-  return { ...result, xp, levels, weeklyReached, rankId: session.rankId, planName: session.planName };
+  return { ...result, xp, levels, weeklyReached, weeklyReward, rankId: session.rankId, planName: session.planName };
 }
 
-export function logSteps(state, day, steps) {
+export function logSteps(state, day, steps, rng = Math.random) {
   state.steps[day] = steps;
-  if (steps < STEP_GOAL || state.claims.days[day]) return false;
+  if (steps < STEP_GOAL || state.claims.days[day]) return null;
   state.claims.days[day] = true;
-  return addXp(state.player, XP.steps) >= 0;
+  addXp(state.player, XP.steps);
+  return grantQuestReward(state, 'steps', rng);
+}
+
+export function hasWeighedIn(state, now) {
+  return Boolean(state.claims.weighIns[weekKey(now)]);
+}
+
+export function logBodyweight(state, now, kg, rng = Math.random) {
+  const date = dateKey(now);
+  state.bodyweight = state.bodyweight.filter((entry) => entry.date !== date);
+  state.bodyweight.push({ date, kg });
+  state.bodyweight.sort((a, b) => a.date.localeCompare(b.date));
+
+  if (hasWeighedIn(state, now)) return null;
+  state.claims.weighIns[weekKey(now)] = true;
+  addXp(state.player, XP.weighIn);
+  return grantQuestReward(state, 'weighIn', rng);
+}
+
+export function exerciseProgress(history, exerciseId) {
+  return history.flatMap((session) => {
+    const sets = session.entries.filter(
+      (entry) => entry.kind === 'set' && entry.exerciseId === exerciseId && entry.type !== 'warm',
+    );
+    if (!sets.length) return [];
+    const best = sets.reduce((top, set) => (
+      strengthValue(set.weight, set.reps) > strengthValue(top.weight, top.reps) ? set : top
+    ));
+    return [{
+      date: session.endedAt,
+      weight: best.weight,
+      reps: best.reps,
+      strength: Math.round(strengthValue(best.weight, best.reps) * 10) / 10,
+    }];
+  });
 }
 
 export function openBox(state, rng) {

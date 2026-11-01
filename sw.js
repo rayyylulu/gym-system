@@ -1,13 +1,16 @@
 // Liefert sofort aus dem Speicher, damit die App im Gym ohne Empfang startet,
 // und holt im Hintergrund die neue Version fürs nächste Öffnen.
-const CACHE = 'gym-system-v1';
+const CACHE = 'gym-system-v2';
 const FILES = [
   './',
   'index.html',
   'styles.css',
   'manifest.webmanifest',
   'src/app.js',
+  'src/art.js',
+  'src/charts.js',
   'src/data.js',
+  'src/reel.js',
   'src/rules.js',
   'src/store.js',
   'icons/icon-180.png',

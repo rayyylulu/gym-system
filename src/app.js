@@ -1,19 +1,37 @@
+import { chestArt, esc, installArtDefs, itemArt } from './art.js';
+import { attachChartHover, lineChart } from './charts.js';
 import { COSMETICS } from './data.js';
+import { playReel } from './reel.js';
 import {
   ATTRIBUTES, CARDIO_CAP_MINUTES, ESSENCE_PACK, PITY_LIMIT, PRICES, RANKS, RARITIES, SLOTS, STATS, STEP_GOAL, UNIQUES,
-  WEEKLY_GOAL, XP, collectBonuses, computeSession, createSession, dateKey, dismantleItem, finishSession, hunterRank,
-  itemValue, levelCost, logSteps, nextPlanId, openBox, previousBenchmark, rerollGate, strengthValue, trainingsThisWeek,
-  upgradeCost, upgradeItem,
+  WEEKLY_GOAL, XP, collectBonuses, computeSession, createSession, dateKey, dismantleItem, exerciseProgress,
+  finishSession, hasWeighedIn, hunterRank, itemValue, levelCost, logBodyweight, logSteps, nextPlanId, openBox,
+  previousBenchmark, rerollGate, strengthValue, trainingsThisWeek, upgradeCost, upgradeItem,
 } from './rules.js';
 import { exportBackup, load, parseBackup, requestPersistentStorage, save } from './store.js';
 
 let state = load();
-const ui = { tab: state.active ? 'dungeon' : 'status', sheet: null, summary: null, form: null, fx: null, notice: null };
+const ui = {
+  tab: state.active ? 'dungeon' : 'status',
+  statusView: 'overview',
+  progressExercise: null,
+  progressMetric: 'strength',
+  sheet: null,
+  summary: null,
+  form: null,
+  fx: null,
+  notice: null,
+};
 const app = document.querySelector('#app');
 let wakeLock = null;
 
-const esc = (value) => String(value).replace(/[&<>"']/g, (char) => `&#${char.charCodeAt(0)};`);
 const num = (value) => Number(value).toLocaleString('de-DE');
+const signed = (value) => `${value > 0 ? '+' : ''}${num(Math.round(value * 10) / 10)}`;
+const rewardText = ({ coins, essence, boxes }) => [
+  coins ? `+${num(coins)} Münzen` : '',
+  essence ? `+${num(essence)} Essenz` : '',
+  boxes ? `+${boxes} Lootbox` : '',
+].filter(Boolean).join(' · ');
 const parseNum = (value) => Number(String(value).replace(',', '.'));
 const clampNumber = (value, fallback = 0) => (Number.isFinite(value) && value >= 0 ? value : fallback);
 
@@ -91,8 +109,30 @@ const actions = {
   },
   saveSteps() {
     const steps = clampNumber(parseNum(document.querySelector('#steps').value));
-    const rewarded = logSteps(state, dateKey(new Date()), Math.round(steps));
-    ui.notice = rewarded ? `[Tagesquest abgeschlossen. +${XP.steps} XP]` : '[Schritte gespeichert.]';
+    const reward = logSteps(state, dateKey(new Date()), Math.round(steps));
+    ui.notice = reward
+      ? `[Tagesquest abgeschlossen. +${XP.steps} XP ${rewardText(reward)}]`
+      : '[Schritte gespeichert.]';
+  },
+  statusView({ view }) {
+    ui.statusView = view;
+  },
+  saveBodyweight() {
+    const kg = parseNum(document.querySelector('#bodyweight').value);
+    if (!(kg > 0)) {
+      ui.notice = '[Trag dein Gewicht ein.]';
+      return;
+    }
+    const reward = logBodyweight(state, new Date(), Math.round(kg * 10) / 10);
+    ui.notice = reward
+      ? `[Wiege-Quest abgeschlossen. +${XP.weighIn} XP ${rewardText(reward)}]`
+      : '[Gewicht gespeichert.]';
+  },
+  progressExercise({ id }) {
+    ui.progressExercise = id;
+  },
+  progressMetric({ metric }) {
+    ui.progressMetric = metric;
   },
   async backup() {
     const done = await exportBackup(state);
@@ -205,9 +245,14 @@ const actions = {
     setWakeLock(false);
   },
 
-  openBox() {
+  async openBox() {
     const item = openBox(state, Math.random);
-    if (item) ui.sheet = { type: 'item', id: item.id, fresh: true };
+    if (!item) return;
+    save(state);
+    ui.sheet = null;
+    render();
+    await playReel(item, state.player.level);
+    ui.sheet = { type: 'item', id: item.id, fresh: true };
   },
   item({ id }) {
     ui.sheet = { type: 'item', id };
@@ -269,7 +314,83 @@ function progress(value, max, label = '') {
   return `<div class="bar" role="progressbar" aria-valuenow="${Math.round(percent)}" aria-valuemin="0" aria-valuemax="100" aria-label="${esc(label)}"><span style="width:${percent}%"></span></div>`;
 }
 
+function bodyweightPanel() {
+  const entries = state.bodyweight;
+  const latest = entries.at(-1);
+  const change = entries.length > 1 ? latest.kg - entries[0].kg : null;
+  const shortDate = (date) => new Date(`${date}T12:00:00`).toLocaleDateString('de-DE');
+  return `
+    <section class="panel">
+      <h2>Körpergewicht</h2>
+      ${latest ? `
+        <p class="stat">${num(latest.kg)} kg</p>
+        <p class="muted">${change === null ? `Startwert vom ${shortDate(latest.date)}` : `${signed(change)} kg seit dem ${shortDate(entries[0].date)}`}</p>
+        ${lineChart(entries.map((entry) => ({ date: `${entry.date}T12:00:00`, value: entry.kg })), { unit: 'kg', label: 'Körpergewicht' })}` : ''}
+      <div class="inline-form">
+        <label class="sr" for="bodyweight">Gewicht in kg</label>
+        <input id="bodyweight" inputmode="decimal" placeholder="Gewicht heute in kg">
+        <button class="btn" data-act="saveBodyweight">Speichern</button>
+      </div>
+      ${entries.length > 1 ? `
+        <details>
+          <summary>Alle Werte</summary>
+          ${[...entries].reverse().map((entry) => `<div class="row"><span class="grow">${shortDate(entry.date)}</span><strong>${num(entry.kg)} kg</strong></div>`).join('')}
+        </details>` : ''}
+    </section>`;
+}
+
+function strengthPanel() {
+  const tracked = state.exercises
+    .map((exercise) => ({ exercise, progress: exerciseProgress(state.history, exercise.id) }))
+    .filter((entry) => entry.progress.length);
+  if (!tracked.length) {
+    return `
+      <section class="panel">
+        <h2>Kraftentwicklung</h2>
+        <p class="muted">Sobald du ein Training abgeschlossen hast, siehst du hier deinen Verlauf pro Übung.</p>
+      </section>`;
+  }
+
+  const selected = tracked.find((entry) => entry.exercise.id === ui.progressExercise) ?? tracked[0];
+  const { progress } = selected;
+  const metric = ui.progressMetric;
+  const key = metric === 'strength' ? 'strength' : 'weight';
+  const first = progress[0][key];
+  const latest = progress.at(-1);
+  const percent = first ? ((latest[key] - first) / first) * 100 : 0;
+  const metrics = [['strength', 'Kraftwert'], ['weight', 'Gewicht']];
+
+  return `
+    <section class="panel">
+      <h2>Kraftentwicklung</h2>
+      <div class="chips" role="group" aria-label="Übung wählen">
+        ${tracked.map(({ exercise }) => `<button class="chip ${exercise.id === selected.exercise.id ? 'on' : ''}" data-act="progressExercise" data-id="${exercise.id}">${esc(exercise.name)}</button>`).join('')}
+      </div>
+      <div class="segmented two" role="group" aria-label="Messwert">
+        ${metrics.map(([id, label]) => `<button class="${metric === id ? 'on' : ''}" aria-pressed="${metric === id}" data-act="progressMetric" data-metric="${id}">${label}</button>`).join('')}
+      </div>
+      <p class="stat">${num(latest[key])} kg</p>
+      <p class="muted">${progress.length > 1 ? `${signed(percent)} % seit deinem ersten Training` : 'Dein Startwert. Der Verlauf wächst mit jedem Training.'}</p>
+      ${lineChart(progress.map((entry) => ({ date: entry.date, value: entry[key] })), { unit: 'kg', label: `${selected.exercise.name}, ${metric === 'strength' ? 'Kraftwert' : 'Gewicht'}` })}
+      <p class="muted">Der Kraftwert rechnet Gewicht und Wiederholungen deines besten Satzes zusammen. So zählt auch ein Fortschritt bei gleichem Gewicht.</p>
+      <details>
+        <summary>Alle Trainings</summary>
+        ${[...progress].reverse().map((entry) => `<div class="row"><span class="grow">${new Date(entry.date).toLocaleDateString('de-DE')}</span><span class="muted">${num(entry.reps)} × ${num(entry.weight)} kg</span><strong>${num(entry.strength)}</strong></div>`).join('')}
+      </details>
+    </section>`;
+}
+
 function statusView() {
+  const tabs = [['overview', 'Übersicht'], ['progress', 'Fortschritt']];
+  return `
+    <h1 class="screen-title">Status</h1>
+    <div class="segmented two" role="group" aria-label="Ansicht">
+      ${tabs.map(([id, label]) => `<button class="${ui.statusView === id ? 'on' : ''}" aria-pressed="${ui.statusView === id}" data-act="statusView" data-view="${id}">${label}</button>`).join('')}
+    </div>
+    ${ui.statusView === 'progress' ? bodyweightPanel() + strengthPanel() : overviewView()}`;
+}
+
+function overviewView() {
   const { player, cosmetics } = state;
   const now = new Date();
   const cost = levelCost(player.level);
@@ -277,9 +398,9 @@ function statusView() {
   const week = trainingsThisWeek(state.history, now);
   const steps = state.steps[dateKey(now)] ?? 0;
   const backupDue = state.backup.trainingsSince >= WEEKLY_GOAL;
+  const weighed = hasWeighedIn(state, now);
 
   return `
-    <h1 class="screen-title">Status</h1>
     <section class="panel hero">
       <div class="rank-badge" aria-label="Jäger-Rang ${hunterRank(player.level)}">${hunterRank(player.level)}</div>
       <div class="hero-main">
@@ -307,10 +428,18 @@ function statusView() {
       <div class="quest">
         <div class="quest-head"><span>Wochenziel</span><span>${Math.min(week, WEEKLY_GOAL)} / ${WEEKLY_GOAL} Trainings</span></div>
         ${progress(week, WEEKLY_GOAL, 'Wochenziel')}
+        <p class="muted">${XP.weekly} XP und Münzen, mit Glück eine Lootbox</p>
+      </div>
+      <div class="quest">
+        <div class="quest-head"><span>Wiegen</span><span>${weighed ? 1 : 0} / 1 diese Woche</span></div>
+        ${progress(weighed ? 1 : 0, 1, 'Wiege-Quest')}
+        <p class="muted">${XP.weighIn} XP und Münzen, mit Glück eine Lootbox</p>
+        ${weighed ? '' : '<button class="btn" data-act="statusView" data-view="progress">Gewicht eintragen</button>'}
       </div>
       <div class="quest">
         <div class="quest-head"><span>Tagesquest</span><span>${num(steps)} / ${num(STEP_GOAL)} Schritte</span></div>
         ${progress(steps, STEP_GOAL, 'Tagesquest')}
+        <p class="muted">${XP.steps} XP, mit Glück Münzen, Essenz oder eine Lootbox</p>
         <div class="inline-form">
           <label class="sr" for="steps">Schritte heute</label>
           <input id="steps" inputmode="numeric" value="${steps || ''}" placeholder="Schritte heute">
@@ -436,8 +565,8 @@ function setLogger(sessionSets) {
         ${types.map(([id, label]) => `<button class="${type === id ? 'on' : ''}" aria-pressed="${type === id}" data-act="setType" data-type="${id}">${label}</button>`).join('')}
       </div>
       <div class="fields">
-        ${stepper('weight', 'Gewicht in kg', 2.5)}
         ${stepper('reps', 'Wiederholungen', 1)}
+        ${stepper('weight', 'Gewicht in kg', 2.5)}
       </div>
       <p class="muted">${hint}</p>
       <button class="btn primary big" data-act="logSet">Satz eintragen</button>
@@ -515,7 +644,7 @@ function summaryView() {
         <div class="row"><span class="grow">XP</span><strong>+${num(summary.xp)}</strong></div>
         <div class="row"><span class="grow">Münzen</span><strong>+${num(summary.coins)}</strong></div>
         ${summary.boxes ? `<div class="row"><span class="grow">Lootbox vom Boss</span><strong>+${summary.boxes}</strong></div>` : ''}
-        ${summary.weeklyReached ? `<div class="row"><span class="grow">Wochenziel erreicht</span><strong class="good">+${XP.weekly} XP</strong></div>` : ''}
+        ${summary.weeklyReached ? `<div class="row"><span class="grow">Wochenziel erreicht</span><strong class="good">${rewardText(summary.weeklyReward)}</strong></div>` : ''}
       </section>
       <button class="btn primary big" data-act="tab" data-tab="status">Zum Status</button>
     </div>`;
@@ -538,8 +667,11 @@ function itemProps(item) {
 function itemCard(item) {
   return `
     <button class="item ${item.rarity}" data-act="item" data-id="${item.id}">
-      <span class="item-name">${esc(item.name)}</span>
-      <span class="muted">${rarityOf(item).name} · Level ${item.level}${isEquipped(item) ? ' · angelegt' : ''}</span>
+      ${itemArt(item)}
+      <span class="grow">
+        <span class="item-name">${esc(item.name)}</span>
+        <span class="muted">${rarityOf(item).name} · Level ${item.level}${isEquipped(item) ? ' · angelegt' : ''}</span>
+      </span>
     </button>`;
 }
 
@@ -548,16 +680,17 @@ function inventoryView() {
   const items = [...inventory].sort((a, b) => Number(isEquipped(b)) - Number(isEquipped(a)) || b.level - a.level);
   return `
     <h1 class="screen-title">Inventar</h1>
-    <section class="panel">
+    <section class="panel chest-panel">
+      ${chestArt()}
       <div class="quest-head"><span>Lootboxen: <strong>${player.boxes}</strong></span><span>Essenz: <strong>${num(player.essence)}</strong></span></div>
       <p class="muted">Glücksschutz: spätestens in ${PITY_LIMIT - state.pity} Boxen kommt ein legendäres Teil.</p>
-      <button class="btn primary big" data-act="openBox" ${player.boxes ? '' : 'disabled'}>Lootbox öffnen</button>
+      <button class="btn primary big" data-act="openBox" ${player.boxes ? '' : 'disabled'}>Kiste öffnen</button>
     </section>
     <section class="slots">
       ${SLOTS.map((slot) => {
         const item = inventory.find((entry) => entry.id === equipped[slot.id]);
         return item
-          ? `<button class="slot filled ${item.rarity}" data-act="item" data-id="${item.id}"><span class="muted">${slot.name}</span>${esc(item.name)}</button>`
+          ? `<button class="slot filled ${item.rarity}" data-act="item" data-id="${item.id}">${itemArt(item)}<span><span class="muted">${slot.name}</span>${esc(item.name)}</span></button>`
           : `<div class="slot"><span class="muted">${slot.name}</span>Leer</div>`;
       }).join('')}
     </section>
@@ -623,12 +756,14 @@ function sheetView() {
     const canUpgrade = item.level < state.player.level;
     body = `
       ${sheet.fresh ? '<p class="system-line">[Neuer Gegenstand erhalten.]</p>' : ''}
+      <div class="showcase ${item.rarity}">${itemArt(item)}</div>
       <h2 class="item-title ${item.rarity}">${esc(item.name)}</h2>
       <p class="muted">${rarityOf(item).name} · ${slotName(item.slot)} · Level ${item.level}</p>
       ${itemProps(item)}
       <button class="btn primary big" data-act="equip" data-id="${item.id}">${isEquipped(item) ? 'Ablegen' : 'Anlegen'}</button>
       ${canUpgrade ? `<button class="btn" data-act="upgrade" data-id="${item.id}">Auf Level ${state.player.level} bringen (${num(cost.essence)} Essenz, ${num(cost.coins)} Münzen)</button>` : ''}
-      ${isEquipped(item) ? '' : `<button class="btn danger" data-act="confirmDismantle" data-id="${item.id}">Zerlegen (+${rarityOf(item).essence} Essenz)</button>`}`;
+      ${isEquipped(item) ? '' : `<button class="btn danger" data-act="confirmDismantle" data-id="${item.id}">Zerlegen (+${rarityOf(item).essence} Essenz)</button>`}
+      ${sheet.fresh && state.player.boxes ? `<button class="btn" data-act="openBox">Nächste Kiste öffnen (${state.player.boxes})</button>` : ''}`;
   }
 
   if (sheet.type === 'dismantle') {
@@ -773,6 +908,8 @@ document.addEventListener('visibilitychange', () => {
 
 requestPersistentStorage();
 if (state.active?.entered) setWakeLock(true);
+installArtDefs();
+attachChartHover(app);
 render();
 
 const isLocal = location.hostname === 'localhost' || location.hostname === '127.0.0.1';
